@@ -195,6 +195,10 @@ function pageAction(action, params) {
       return getPageContent(params.selector);
     case 'fill_input':
       return fillInput(params.selector, params.value);
+    case 'clear_input':
+      return clearInput(params.selector);
+    case 'fill_form':
+      return fillForm(params.fields);
     case 'screenshot':
       return takeScreenshot();
     default:
@@ -265,12 +269,122 @@ function fillInput(selector, value) {
     throw new Error(`Input element not found: ${selector}`);
   }
   
+  // Scroll element into view
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  
+  // Focus the element
   element.focus();
-  element.value = value;
+  
+  // Clear existing value using multiple strategies
+  if (element.value && element.value.length > 0) {
+    // Strategy 1: Select all and delete
+    element.select();
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true }));
+    
+    // Strategy 2: Set value to empty first
+    element.value = '';
+    
+    // Strategy 3: Manual clear for contenteditable
+    if (element.isContentEditable) {
+      element.textContent = '';
+      element.innerHTML = '';
+    }
+  }
+  
+  // Handle different input types
+  if (element.type === 'checkbox' || element.type === 'radio') {
+    element.checked = Boolean(value);
+  } else if (element.tagName === 'SELECT') {
+    // Handle select elements
+    const option = element.querySelector(`option[value="${value}"]`) ||
+                   element.querySelector(`option[text="${value}"]`) ||
+                   [...element.options].find(opt => opt.textContent.trim() === value);
+    if (option) {
+      option.selected = true;
+      element.value = option.value;
+    } else {
+      element.value = value;
+    }
+  } else {
+    // For text inputs, simulate typing character by character for better compatibility
+    element.value = '';
+    
+    // Trigger focus events
+    element.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    
+    // Type value character by character for React/Vue compatibility
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
+      element.value = value.substring(0, i + 1);
+      
+      // Trigger input event for each character
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        data: char,
+        inputType: 'insertText'
+      }));
+    }
+    
+    // Final value set
+    element.value = value;
+  }
+  
+  // Trigger all necessary events
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  element.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+  
+  return { success: true, selector, value };
+}
+
+function clearInput(selector) {
+  const element = document.querySelector(selector);
+  if (!element) {
+    throw new Error(`Input element not found: ${selector}`);
+  }
+  
+  // Scroll element into view
+  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  
+  // Focus the element
+  element.focus();
+  
+  // Clear using multiple strategies
+  element.select();
+  element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true }));
+  element.value = '';
+  
+  if (element.isContentEditable) {
+    element.textContent = '';
+    element.innerHTML = '';
+  }
+  
+  // Trigger events
   element.dispatchEvent(new Event('input', { bubbles: true }));
   element.dispatchEvent(new Event('change', { bubbles: true }));
   
-  return { success: true, selector, value };
+  return { success: true, selector };
+}
+
+function fillForm(fields) {
+  const results = [];
+  
+  fields.forEach(field => {
+    try {
+      const result = fillInput(field.selector, field.value);
+      results.push({ ...result, field: field.selector });
+    } catch (error) {
+      results.push({ 
+        success: false, 
+        selector: field.selector, 
+        value: field.value,
+        error: error.message 
+      });
+    }
+  });
+  
+  return { success: true, results, fieldCount: fields.length };
 }
 
 // Action router - handles actions from native host
@@ -296,6 +410,8 @@ async function handleAction(action, params) {
       case 'scroll':
       case 'get_content':
       case 'fill_input':
+      case 'clear_input':
+      case 'fill_form':
         const tabId = params.tabId || (await getActiveTab()).id;
         return await executeInTab(tabId, action, params);
       

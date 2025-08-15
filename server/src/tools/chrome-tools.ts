@@ -90,12 +90,18 @@ export class ChromeTools {
     }
   }
 
-  async type(selector: string, text: string, tabId?: number): Promise<any> {
+  async type(
+    selector: string,
+    text: string,
+    tabId?: number,
+    clearFirst: boolean = true,
+  ): Promise<any> {
     try {
       const result = await this.nativeMessenger.sendCommand("fill_input", {
         selector,
         value: text,
         tabId,
+        clearFirst,
       });
       return {
         success: true,
@@ -377,6 +383,47 @@ export class ChromeTools {
     } catch (error) {
       throw new Error(
         `Check checkbox failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async clearInput(selector: string, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand("clear_input", {
+        selector,
+        tabId,
+      });
+      return {
+        success: true,
+        selector,
+        tabId: tabId || "active",
+        message: `Successfully cleared input: ${selector}`,
+      };
+    } catch (error) {
+      throw new Error(
+        `Clear input failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async fillForm(
+    fields: Array<{ selector: string; value: any }>,
+    tabId?: number,
+  ): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand("fill_form", {
+        fields,
+        tabId,
+      });
+      return {
+        success: true,
+        fields,
+        tabId: tabId || "active",
+        message: `Successfully filled form with ${fields.length} fields`,
+      };
+    } catch (error) {
+      throw new Error(
+        `Fill form failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
