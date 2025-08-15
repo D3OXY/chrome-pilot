@@ -298,6 +298,10 @@ function pageAction(action, params) {
       return getPageContent(params.selector);
     case 'fill_input':
       return fillInput(params.selector, params.value);
+    case 'get_interactive_elements':
+      return getInteractiveElements();
+    case 'wait_for_element':
+      return waitForElement(params.selector, params.timeout);
     case 'screenshot':
       return takeScreenshot();
     default:
@@ -376,6 +380,123 @@ function fillInput(selector, value) {
   return { success: true, selector, value };
 }
 
+function getInteractiveElements() {
+  const interactiveSelectors = [
+    'button',
+    'input',
+    'select',
+    'textarea',
+    'a[href]',
+    '[onclick]',
+    '[role="button"]',
+    '[tabindex]:not([tabindex="-1"])',
+    'label[for]',
+    '[contenteditable="true"]'
+  ];
+  
+  const elements = [];
+  
+  interactiveSelectors.forEach(selector => {
+    const found = document.querySelectorAll(selector);
+    found.forEach((element, index) => {
+      const rect = element.getBoundingClientRect();
+      const isVisible = rect.width > 0 && rect.height > 0 && 
+                       window.getComputedStyle(element).display !== 'none' &&
+                       window.getComputedStyle(element).visibility !== 'hidden';
+      
+      if (isVisible) {
+        elements.push({
+          tagName: element.tagName.toLowerCase(),
+          type: element.type || null,
+          id: element.id || null,
+          className: element.className || null,
+          text: element.textContent?.trim()?.substring(0, 100) || null,
+          value: element.value || null,
+          href: element.href || null,
+          selector: generateSelector(element),
+          position: {
+            x: Math.round(rect.left + rect.width / 2),
+            y: Math.round(rect.top + rect.height / 2),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height)
+          }
+        });
+      }
+    });
+  });
+  
+  return {
+    success: true,
+    elements: elements,
+    count: elements.length
+  };
+}
+
+function generateSelector(element) {
+  if (element.id) {
+    return `#${element.id}`;
+  }
+  
+  if (element.className) {
+    const classes = element.className.split(' ').filter(c => c.trim());
+    if (classes.length > 0) {
+      return `.${classes[0]}`;
+    }
+  }
+  
+  let selector = element.tagName.toLowerCase();
+  const parent = element.parentElement;
+  if (parent) {
+    const siblings = Array.from(parent.children).filter(
+      child => child.tagName === element.tagName
+    );
+    if (siblings.length > 1) {
+      const index = siblings.indexOf(element) + 1;
+      selector += `:nth-of-type(${index})`;
+    }
+  }
+  
+  return selector;
+}
+
+function waitForElement(selector, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const element = document.querySelector(selector);
+    if (element) {
+      resolve({ success: true, selector, found: true });
+      return;
+    }
+    
+    const startTime = Date.now();
+    
+    const observer = new MutationObserver(() => {
+      const element = document.querySelector(selector);
+      if (element) {
+        observer.disconnect();
+        resolve({ success: true, selector, found: true, waitTime: Date.now() - startTime });
+        return;
+      }
+      
+      if (Date.now() - startTime > timeout) {
+        observer.disconnect();
+        reject(new Error(`Element not found within ${timeout}ms: ${selector}`));
+      }
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true
+    });
+    
+    // Also set a hard timeout
+    setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`Element not found within ${timeout}ms: ${selector}`));
+    }, timeout);
+  });
+}
+
 // Action router - handles actions from WebSocket server
 async function handleAction(action, params) {
   try {
@@ -399,6 +520,8 @@ async function handleAction(action, params) {
       case 'scroll':
       case 'get_content':
       case 'fill_input':
+      case 'get_interactive_elements':
+      case 'wait_for_element':
         const tabId = params.tabId || (await getActiveTab()).id;
         return await executeInTab(tabId, action, params);
       
