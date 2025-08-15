@@ -3,6 +3,35 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
+// Interface definitions for better type safety
+interface ClickOptions {
+  selector?: string;
+  coordinates?: { x: number; y: number };
+  waitForNavigation?: boolean;
+  timeout?: number;
+}
+
+interface ScreenshotOptions {
+  tabId?: number;
+  fullPage?: boolean;
+  element?: string;
+  format?: "png" | "jpeg";
+  quality?: number;
+}
+
+interface ElementSearchOptions {
+  textQuery?: string;
+  selector?: string;
+  includeCoordinates?: boolean;
+  types?: string[];
+}
+
+interface WebContentOptions {
+  selector?: string;
+  htmlContent?: boolean;
+  textContent?: boolean;
+}
+
 export class ChromeTools {
   constructor(private nativeMessenger: NativeMessenger) {}
 
@@ -73,7 +102,7 @@ export class ChromeTools {
 
   async click(selector: string, tabId?: number): Promise<any> {
     try {
-      const result = await this.nativeMessenger.sendCommand("click", {
+      const result = await this.nativeMessenger.sendCommand("click_enhanced", {
         selector,
         tabId,
       });
@@ -82,10 +111,50 @@ export class ChromeTools {
         selector,
         tabId: tabId || "active",
         message: `Successfully clicked element: ${selector}`,
+        ...result,
       };
     } catch (error) {
       throw new Error(
         `Click failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async clickCoordinates(x: number, y: number, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand("click_enhanced", {
+        coordinates: { x, y },
+        tabId,
+      });
+      return {
+        success: true,
+        coordinates: { x, y },
+        tabId: tabId || "active",
+        message: `Successfully clicked at coordinates (${x}, ${y})`,
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Click coordinates failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async clickAdvanced(options: ClickOptions): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand(
+        "click_enhanced",
+        options,
+      );
+      return {
+        success: true,
+        options,
+        message: "Advanced click completed successfully",
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Advanced click failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -97,7 +166,7 @@ export class ChromeTools {
     clearFirst: boolean = true,
   ): Promise<any> {
     try {
-      const result = await this.nativeMessenger.sendCommand("fill_input", {
+      const result = await this.nativeMessenger.sendCommand("fill_enhanced", {
         selector,
         value: text,
         tabId,
@@ -109,10 +178,53 @@ export class ChromeTools {
         text,
         tabId: tabId || "active",
         message: `Successfully typed "${text}" into ${selector}`,
+        ...result,
       };
     } catch (error) {
       throw new Error(
         `Type failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async fill(selector: string, value: any, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand("fill_enhanced", {
+        selector,
+        value,
+        tabId,
+      });
+      return {
+        success: true,
+        selector,
+        value,
+        tabId: tabId || "active",
+        message: `Successfully filled element: ${selector}`,
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Fill failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async clear(selector: string, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand("clear_enhanced", {
+        selector,
+        tabId,
+      });
+      return {
+        success: true,
+        selector,
+        tabId: tabId || "active",
+        message: `Successfully cleared element: ${selector}`,
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Clear failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -138,7 +250,7 @@ export class ChromeTools {
     }
   }
 
-  async screenshot(tabId?: number): Promise<any> {
+  async screenshotBasic(tabId?: number): Promise<any> {
     try {
       const result = await this.nativeMessenger.sendCommand("screenshot", {
         tabId,
@@ -231,22 +343,50 @@ export class ChromeTools {
     }
   }
 
-  async getInteractiveElements(tabId?: number): Promise<any> {
+  async getInteractiveElements(
+    options: ElementSearchOptions = {},
+  ): Promise<any> {
     try {
+      const { tabId, ...searchOptions } = options as ElementSearchOptions & {
+        tabId?: number;
+      };
       const result = await this.nativeMessenger.sendCommand(
         "get_interactive_elements",
-        { tabId },
+        { tabId, ...searchOptions },
       );
       return {
         success: true,
-        elements: result,
-        count: result.length,
+        elements: result.elements || result,
+        count: result.elements ? result.elements.length : result.length,
         tabId: tabId || "active",
-        message: `Found ${result.length} interactive elements`,
+        message: `Found ${result.elements ? result.elements.length : result.length} interactive elements`,
+        ...result,
       };
     } catch (error) {
       throw new Error(
         `Get interactive elements failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async findElementsByText(
+    text: string,
+    options: ElementSearchOptions = {},
+  ): Promise<any> {
+    try {
+      const searchOptions = {
+        textQuery: text,
+        ...options,
+      };
+      const result = await this.getInteractiveElements(searchOptions);
+      return {
+        ...result,
+        searchText: text,
+        message: `Found ${result.count} elements containing "${text}"`,
+      };
+    } catch (error) {
+      throw new Error(
+        `Find elements by text failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -411,19 +551,214 @@ export class ChromeTools {
     tabId?: number,
   ): Promise<any> {
     try {
-      const result = await this.nativeMessenger.sendCommand("fill_form", {
-        fields,
-        tabId,
-      });
+      const results = [];
+
+      // Fill each field individually using enhanced fill
+      for (const field of fields) {
+        try {
+          const result = await this.fill(field.selector, field.value, tabId);
+          results.push({ ...result, field: field.selector });
+        } catch (error) {
+          results.push({
+            success: false,
+            selector: field.selector,
+            value: field.value,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      const successCount = results.filter((r) => r.success).length;
+
       return {
         success: true,
         fields,
+        results,
+        successCount,
+        totalCount: fields.length,
         tabId: tabId || "active",
-        message: `Successfully filled form with ${fields.length} fields`,
+        message: `Successfully filled ${successCount}/${fields.length} form fields`,
       };
     } catch (error) {
       throw new Error(
         `Fill form failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async screenshot(options: ScreenshotOptions = {}): Promise<any> {
+    try {
+      const { tabId, fullPage = false, element, format = "png" } = options;
+
+      if (fullPage) {
+        return await this.screenshotFullPage(tabId);
+      } else if (element) {
+        return await this.screenshotElement(element, tabId);
+      } else {
+        return await this.screenshotBasic(tabId);
+      }
+    } catch (error) {
+      throw new Error(
+        `Screenshot failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async screenshotFullPage(tabId?: number): Promise<any> {
+    try {
+      // This would need to be implemented with scrolling and stitching
+      // For now, fallback to basic screenshot
+      const result = await this.screenshotBasic(tabId);
+      return {
+        ...result,
+        type: "full-page",
+        message: "Full-page screenshot captured (fallback to viewport)",
+      };
+    } catch (error) {
+      throw new Error(
+        `Full-page screenshot failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async screenshotElement(selector: string, tabId?: number): Promise<any> {
+    try {
+      // This would need to be implemented with element positioning
+      // For now, fallback to basic screenshot
+      const result = await this.screenshotBasic(tabId);
+      return {
+        ...result,
+        element: selector,
+        type: "element",
+        message: `Element screenshot captured for: ${selector} (fallback to viewport)`,
+      };
+    } catch (error) {
+      throw new Error(
+        `Element screenshot failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async getWebContent(options: WebContentOptions = {}): Promise<any> {
+    try {
+      const { tabId, ...contentOptions } = options as WebContentOptions & {
+        tabId?: number;
+      };
+      const result = await this.nativeMessenger.sendCommand("get_web_content", {
+        tabId,
+        ...contentOptions,
+      });
+      return {
+        success: true,
+        content: result,
+        tabId: tabId || "active",
+        message: "Web content extracted successfully",
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Get web content failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async getHTML(selector?: string, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand(
+        "get_html_content",
+        {
+          selector,
+          tabId,
+        },
+      );
+      return {
+        success: true,
+        htmlContent: result.htmlContent || result,
+        selector: selector || "page",
+        tabId: tabId || "active",
+        message: selector
+          ? `HTML content extracted from: ${selector}`
+          : "Page HTML content extracted",
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Get HTML failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async getText(selector?: string, tabId?: number): Promise<any> {
+    try {
+      const result = await this.getWebContent({
+        selector,
+        textContent: true,
+        tabId,
+      } as WebContentOptions & { tabId?: number });
+      return {
+        ...result,
+        message: selector
+          ? `Text content extracted from: ${selector}`
+          : "Page text content extracted",
+      };
+    } catch (error) {
+      throw new Error(
+        `Get text failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async highlightElement(
+    selector: string,
+    tabId?: number,
+    options: any = {},
+  ): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand(
+        "screenshot_prepare",
+        {
+          action: "highlightElement",
+          selector,
+          options,
+          tabId,
+        },
+      );
+      return {
+        success: true,
+        selector,
+        highlighted: true,
+        tabId: tabId || "active",
+        message: `Element highlighted: ${selector}`,
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Highlight element failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async unhighlightElement(selector: string, tabId?: number): Promise<any> {
+    try {
+      const result = await this.nativeMessenger.sendCommand(
+        "screenshot_prepare",
+        {
+          action: "unhighlightElement",
+          selector,
+          tabId,
+        },
+      );
+      return {
+        success: true,
+        selector,
+        highlighted: false,
+        tabId: tabId || "active",
+        message: `Element unhighlighted: ${selector}`,
+        ...result,
+      };
+    } catch (error) {
+      throw new Error(
+        `Unhighlight element failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

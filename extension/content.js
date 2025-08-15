@@ -1,10 +1,12 @@
 // Chrome MCP Controller - Content Script
-
-// Content script for enhanced page interaction
+// Enhanced content script that works with helper scripts for specialized functionality
 (function() {
   'use strict';
 
-  // Enhanced page interaction functions
+  // Track which helper scripts have been loaded
+  window.__CHROME_PILOT_HELPERS__ = window.__CHROME_PILOT_HELPERS__ || {};
+
+  // Core page interaction functions (delegating to helper scripts when available)
   const PageInteractor = {
     
     // Find interactive elements on the page
@@ -96,8 +98,19 @@
       return element.tagName.toLowerCase();
     },
     
-    // Enhanced click with multiple strategies
-    click(selector) {
+    // Enhanced click that delegates to helper script if available
+    click(selector, coordinates = null) {
+      // If click helper is loaded, delegate to it
+      if (window.__CLICK_HELPER_INITIALIZED__) {
+        return this.delegateToHelper('clickElement', {
+          selector,
+          coordinates,
+          waitForNavigation: false,
+          timeout: 5000
+        });
+      }
+      
+      // Fallback to basic click
       const element = this.findElement(selector);
       if (!element) {
         throw new Error(`Element not found: ${selector}`);
@@ -175,8 +188,28 @@
       return document.querySelector(selector);
     },
     
-    // Enhanced form filling
+    // Enhanced form filling that delegates to helper script if available
     fillForm(fields) {
+      // If fill helper is loaded, use it for individual fields
+      if (window.__FILL_HELPER_INITIALIZED__) {
+        const results = [];
+        
+        fields.forEach(async (field) => {
+          try {
+            const result = await this.delegateToHelper('fillElement', {
+              selector: field.selector,
+              value: field.value
+            });
+            results.push({ selector: field.selector, success: result.success, result });
+          } catch (error) {
+            results.push({ selector: field.selector, success: false, error: error.message });
+          }
+        });
+        
+        return results;
+      }
+      
+      // Fallback to basic form filling
       const results = [];
       
       fields.forEach(field => {
@@ -267,6 +300,90 @@
           }))
         }))
       };
+    },
+    
+    // Delegate to helper script if available
+    delegateToHelper(action, params) {
+      return new Promise((resolve, reject) => {
+        // Create a unique message ID for response tracking
+        const messageId = Date.now() + Math.random();
+        const message = {
+          action: action,
+          messageId: messageId,
+          ...params
+        };
+        
+        // Set up one-time message listener for response
+        const responseListener = (event) => {
+          if (event.data && event.data.messageId === messageId) {
+            window.removeEventListener('message', responseListener);
+            if (event.data.error) {
+              reject(new Error(event.data.error));
+            } else {
+              resolve(event.data);
+            }
+          }
+        };
+        
+        window.addEventListener('message', responseListener);
+        
+        // Dispatch the message to helper scripts
+        window.dispatchEvent(new CustomEvent('chrome-pilot-helper-request', {
+          detail: message
+        }));
+        
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          window.removeEventListener('message', responseListener);
+          reject(new Error('Helper script timeout'));
+        }, 10000);
+      });
+    },
+    
+    // Get web content using helper script if available
+    getWebContent(options = {}) {
+      if (window.__WEB_FETCHER_HELPER_INITIALIZED__) {
+        return this.delegateToHelper('getTextContent', options);
+      }
+      
+      // Fallback to basic content extraction
+      return {
+        success: true,
+        textContent: document.body.textContent || '',
+        title: document.title,
+        url: window.location.href
+      };
+    },
+    
+    // Find elements by text using helper script if available
+    findElementsByText(text, options = {}) {
+      if (window.__INTERACTIVE_ELEMENTS_HELPER_INITIALIZED__) {
+        return this.delegateToHelper('getInteractiveElements', {
+          textQuery: text,
+          ...options
+        });
+      }
+      
+      // Fallback to basic text search
+      const elements = [];
+      const allElements = document.querySelectorAll('*');
+      
+      allElements.forEach(el => {
+        const elementText = el.textContent || el.value || el.placeholder || '';
+        if (elementText.toLowerCase().includes(text.toLowerCase())) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            elements.push({
+              selector: this.generateSelector(el),
+              text: elementText.trim().substring(0, 100),
+              tagName: el.tagName.toLowerCase(),
+              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            });
+          }
+        }
+      });
+      
+      return { success: true, elements };
     }
   };
   
@@ -300,6 +417,12 @@
       case 'get_page_info':
         return PageInteractor.getPageInfo();
       
+      case 'get_web_content':
+        return PageInteractor.getWebContent(params);
+      
+      case 'find_elements_by_text':
+        return PageInteractor.findElementsByText(params.text, params.options || {});
+      
       case 'scroll_to_element':
         const element = PageInteractor.findElement(params.selector);
         if (!element) {
@@ -312,16 +435,33 @@
         });
         return { success: true, selector: params.selector };
       
+      case 'click_coordinates':
+        return PageInteractor.click(null, { x: params.x, y: params.y });
+      
       default:
         throw new Error(`Unknown content action: ${action}`);
     }
   }
   
+  // Set up helper script communication
+  window.addEventListener('chrome-pilot-helper-response', (event) => {
+    // Forward helper responses back to requesting code
+    window.postMessage(event.detail, '*');
+  });
+  
   // Notify background script that content script is ready
   chrome.runtime.sendMessage({
     from: 'content',
     action: 'ready',
-    url: window.location.href
+    url: window.location.href,
+    helpers: {
+      click: !!window.__CLICK_HELPER_INITIALIZED__,
+      fill: !!window.__FILL_HELPER_INITIALIZED__,
+      interactive: !!window.__INTERACTIVE_ELEMENTS_HELPER_INITIALIZED__,
+      screenshot: !!window.__SCREENSHOT_HELPER_INITIALIZED__,
+      webFetcher: !!window.__WEB_FETCHER_HELPER_INITIALIZED__
+    }
   });
   
+  console.log('Chrome Pilot content script loaded');
 })();

@@ -8,6 +8,27 @@ let isConnected = false;
 // Message handlers registry
 const handlers = new Map();
 
+// Helper script injection tracking
+const injectedScripts = new Map();
+
+// Message type constants
+const MESSAGE_TYPES = {
+  CLICK_ELEMENT: 'clickElement',
+  FILL_ELEMENT: 'fillElement',
+  CLEAR_ELEMENT: 'clearElement',
+  GET_INTERACTIVE_ELEMENTS: 'getInteractiveElements',
+  GET_HTML_CONTENT: 'getHTMLContent',
+  GET_TEXT_CONTENT: 'getTextContent',
+  PREPARE_PAGE_FOR_CAPTURE: 'preparePageForCapture',
+  GET_PAGE_DETAILS: 'getPageDetails',
+  GET_ELEMENT_DETAILS: 'getElementDetails',
+  SCROLL_PAGE: 'scrollPage',
+  RESET_PAGE_AFTER_CAPTURE: 'resetPageAfterCapture',
+  HIGHLIGHT_ELEMENT: 'highlightElement',
+  UNHIGHLIGHT_ELEMENT: 'unhighlightElement',
+  REMOVE_ALL_HIGHLIGHTS: 'removeAllHighlights'
+};
+
 // Initialize native messaging connection
 function connectNativeHost() {
   try {
@@ -59,6 +80,53 @@ function processMessageQueue() {
     const message = messageQueue.shift();
     nativePort.postMessage(message);
   }
+}
+
+// Helper script injection function
+async function injectHelperScript(tabId, scriptName) {
+  const scriptKey = `${tabId}-${scriptName}`;
+  
+  if (injectedScripts.has(scriptKey)) {
+    return; // Already injected
+  }
+  
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [`inject-scripts/${scriptName}`]
+    });
+    injectedScripts.set(scriptKey, Date.now());
+    console.log(`Injected ${scriptName} into tab ${tabId}`);
+  } catch (error) {
+    console.error(`Failed to inject ${scriptName}:`, error);
+    throw error;
+  }
+}
+
+// Clean up injection tracking when tabs are closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const [key, _] of injectedScripts) {
+    if (key.startsWith(`${tabId}-`)) {
+      injectedScripts.delete(key);
+    }
+  }
+});
+
+// Send message to content script with helper injection
+async function sendToContentScript(tabId, message, requiredScript = null) {
+  if (requiredScript) {
+    await injectHelperScript(tabId, requiredScript);
+  }
+  
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(response);
+      }
+    });
+  });
 }
 
 // Send message to native host
@@ -168,6 +236,30 @@ async function createTab(url) {
 // Page interaction functions
 async function executeInTab(tabId, action, params = {}) {
   try {
+    // For enhanced actions, use helper scripts
+    const enhancedActions = {
+      'click_enhanced': { script: 'click-helper.js', message: MESSAGE_TYPES.CLICK_ELEMENT },
+      'fill_enhanced': { script: 'fill-helper.js', message: MESSAGE_TYPES.FILL_ELEMENT },
+      'clear_enhanced': { script: 'fill-helper.js', message: MESSAGE_TYPES.CLEAR_ELEMENT },
+      'get_interactive_elements': { script: 'interactive-elements-helper.js', message: MESSAGE_TYPES.GET_INTERACTIVE_ELEMENTS },
+      'get_web_content': { script: 'web-fetcher-helper.js', message: MESSAGE_TYPES.GET_TEXT_CONTENT },
+      'get_html_content': { script: 'web-fetcher-helper.js', message: MESSAGE_TYPES.GET_HTML_CONTENT },
+      'screenshot_prepare': { script: 'screenshot-helper.js', message: MESSAGE_TYPES.PREPARE_PAGE_FOR_CAPTURE },
+      'screenshot_details': { script: 'screenshot-helper.js', message: MESSAGE_TYPES.GET_PAGE_DETAILS },
+      'screenshot_element': { script: 'screenshot-helper.js', message: MESSAGE_TYPES.GET_ELEMENT_DETAILS },
+    };
+    
+    if (enhancedActions[action]) {
+      const config = enhancedActions[action];
+      const message = {
+        action: config.message,
+        ...params
+      };
+      
+      return await sendToContentScript(tabId, message, config.script);
+    }
+    
+    // Fallback to direct script execution for basic actions
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: pageAction,
@@ -189,6 +281,8 @@ function pageAction(action, params) {
   switch (action) {
     case 'click':
       return clickElement(params.selector);
+    case 'click_coordinates':
+      return clickCoordinates(params.x, params.y);
     case 'scroll':
       return scrollPage(params.direction, params.amount);
     case 'get_content':
@@ -199,6 +293,8 @@ function pageAction(action, params) {
       return clearInput(params.selector);
     case 'fill_form':
       return fillForm(params.fields);
+    case 'find_element_by_text':
+      return findElementByText(params.text, params.elementTypes);
     case 'screenshot':
       return takeScreenshot();
     default:
@@ -387,6 +483,78 @@ function fillForm(fields) {
   return { success: true, results, fieldCount: fields.length };
 }
 
+// Enhanced click with coordinates support
+function clickCoordinates(x, y) {
+  const clickEvent = new MouseEvent('click', {
+    view: window,
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+  });
+
+  const element = document.elementFromPoint(x, y);
+  if (element) {
+    element.dispatchEvent(clickEvent);
+    return { success: true, x, y, element: element.tagName };
+  } else {
+    document.dispatchEvent(clickEvent);
+    return { success: true, x, y, element: 'document' };
+  }
+}
+
+// Find element by text content
+function findElementByText(text, elementTypes = ['button', 'a', 'input']) {
+  const results = [];
+  const selectors = {
+    button: 'button, [role="button"], input[type="button"], input[type="submit"]',
+    a: 'a[href]',
+    input: 'input, textarea, select',
+    all: '*'
+  };
+  
+  elementTypes.forEach(type => {
+    const selector = selectors[type] || selectors.all;
+    const elements = document.querySelectorAll(selector);
+    
+    elements.forEach(el => {
+      const elementText = el.textContent || el.value || el.placeholder || el.alt || '';
+      if (elementText.toLowerCase().includes(text.toLowerCase())) {
+        const rect = el.getBoundingClientRect();
+        results.push({
+          selector: generateSimpleSelector(el),
+          text: elementText.trim(),
+          tagName: el.tagName.toLowerCase(),
+          type: el.type || null,
+          rect: {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height
+          },
+          isVisible: rect.width > 0 && rect.height > 0
+        });
+      }
+    });
+  });
+  
+  return { success: true, results, count: results.length, searchText: text };
+}
+
+// Generate a simple selector for an element
+function generateSimpleSelector(element) {
+  if (element.id) {
+    return `#${element.id}`;
+  }
+  if (element.className) {
+    const classes = element.className.split(' ').filter(c => c);
+    if (classes.length > 0) {
+      return `${element.tagName.toLowerCase()}.${classes[0]}`;
+    }
+  }
+  return element.tagName.toLowerCase();
+}
+
 // Action router - handles actions from native host
 async function handleAction(action, params) {
   try {
@@ -412,6 +580,17 @@ async function handleAction(action, params) {
       case 'fill_input':
       case 'clear_input':
       case 'fill_form':
+      case 'click_enhanced':
+      case 'fill_enhanced':
+      case 'clear_enhanced':
+      case 'get_interactive_elements':
+      case 'get_web_content':
+      case 'get_html_content':
+      case 'screenshot_prepare':
+      case 'screenshot_details':
+      case 'screenshot_element':
+      case 'click_coordinates':
+      case 'find_element_by_text':
         const tabId = params.tabId || (await getActiveTab()).id;
         return await executeInTab(tabId, action, params);
       
