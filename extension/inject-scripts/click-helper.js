@@ -126,14 +126,9 @@ if (window.__CLICK_HELPER_INITIALIZED__) {
         });
       }
 
-      // Perform the click
+      // Perform the click - SIMPLIFIED like reference project
       if (element && elementInfo.clickMethod === 'selector') {
-        // Try multiple click strategies for better compatibility
-        const success = tryMultipleClickStrategies(element);
-        if (!success) {
-          // Fallback to coordinate click
-          simulateClick(clickX, clickY);
-        }
+        element.click();
       } else {
         simulateClick(clickX, clickY);
       }

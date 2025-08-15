@@ -71,16 +71,25 @@ export class ChromeWebSocketTools {
     }
   }
 
-  async click(selector: string, tabId?: number): Promise<any> {
+  async click(
+    selector: string,
+    tabId?: number,
+    waitForNavigation?: boolean,
+    timeout?: number,
+  ): Promise<any> {
     try {
       const result = await this.webSocketServer.sendCommand("click_enhanced", {
         selector,
         tabId,
+        waitForNavigation: waitForNavigation || false,
+        timeout: timeout || 5000,
       });
       return {
         success: true,
         selector,
         tabId: tabId || "active",
+        waitForNavigation: waitForNavigation || false,
+        navigationOccurred: result.navigationOccurred || false,
         message: `Successfully clicked element: ${selector}`,
       };
     } catch (error) {
