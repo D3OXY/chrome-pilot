@@ -11,7 +11,7 @@ const maxReconnectAttempts = 5;
 const handlers = new Map();
 
 // WebSocket server configuration
-const WS_SERVER_URL = 'ws://172.25.0.1:9222/ws'; // Default WSL IP, can be configured
+let WS_SERVER_URL = 'ws://localhost:9222/ws'; // Default to localhost for WSL/Windows
 
 // Initialize WebSocket connection
 function connectWebSocket() {
@@ -160,7 +160,7 @@ function sendCommandToServer(action, params = {}) {
 
 // Generate unique message ID
 function generateId() {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  return Date.now().toString(36) + Math.random().toString(36).substring(2);
 }
 
 // Tab management functions (same as before)
@@ -429,6 +429,36 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Extension installed - connecting to WebSocket');
   connectWebSocket();
+});
+
+// Message listener for popup communication
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'getConnectionStatus') {
+    sendResponse({ connected: isConnected });
+    return;
+  }
+  
+  if (message.action === 'reconnect') {
+    connectWebSocket();
+    sendResponse({ success: true });
+    return;
+  }
+  
+  if (message.action === 'testConnection') {
+    if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: 'WebSocket not connected' });
+    }
+    return;
+  }
+  
+  if (message.action === 'getTabs') {
+    getAllTabs()
+      .then(tabs => sendResponse({ success: true, data: tabs }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true; // Keep message channel open for async response
+  }
 });
 
 // Connect immediately when service worker starts
