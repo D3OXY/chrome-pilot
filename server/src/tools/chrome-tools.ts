@@ -1,4 +1,7 @@
 import { NativeMessenger } from "../native-host.js";
+import { writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 
 export class ChromeTools {
   constructor(private nativeMessenger: NativeMessenger) {}
@@ -134,12 +137,30 @@ export class ChromeTools {
       const result = await this.nativeMessenger.sendCommand("screenshot", {
         tabId,
       });
+
+      // Save screenshot to temp file
+      const timestamp = Date.now();
+      const filename = `chrome-screenshot-${timestamp}.png`;
+      const tempDir = tmpdir();
+      const filepath = join(tempDir, filename);
+
+      // Extract base64 data from data URL
+      const base64Data = result.screenshot.replace(
+        /^data:image\/png;base64,/,
+        "",
+      );
+      const buffer = Buffer.from(base64Data, "base64");
+
+      // Write to temp file
+      writeFileSync(filepath, buffer);
+
       return {
         success: true,
-        screenshot: result.screenshot,
+        screenshotPath: filepath,
+        filename: filename,
         timestamp: result.timestamp,
         tabId: tabId || "active",
-        message: "Screenshot captured successfully",
+        message: `Screenshot saved to: ${filepath}`,
       };
     } catch (error) {
       throw new Error(
