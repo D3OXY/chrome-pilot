@@ -51,9 +51,41 @@ class ChromeMCPServer {
       console.error("[MCP Error]", error);
     };
 
-    process.on("SIGINT", async () => {
-      await this.server.close();
-      process.exit(0);
+    // Graceful shutdown handlers
+    const shutdown = async (signal: string) => {
+      console.error(`\nReceived ${signal}, shutting down gracefully...`);
+
+      try {
+        // Close WebSocket server if running
+        if (this.webSocketServer) {
+          await this.webSocketServer.stop();
+          console.error("WebSocket server closed");
+        }
+
+        // Close MCP server
+        await this.server.close();
+        console.error("MCP server closed");
+
+        process.exit(0);
+      } catch (error) {
+        console.error("Error during shutdown:", error);
+        process.exit(1);
+      }
+    };
+
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGUSR2", () => shutdown("SIGUSR2")); // For nodemon
+
+    // Handle uncaught exceptions
+    process.on("uncaughtException", (error) => {
+      console.error("Uncaught Exception:", error);
+      shutdown("uncaughtException");
+    });
+
+    process.on("unhandledRejection", (reason, promise) => {
+      console.error("Unhandled Rejection at:", promise, "reason:", reason);
+      shutdown("unhandledRejection");
     });
   }
 
