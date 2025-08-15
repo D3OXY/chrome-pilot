@@ -94,7 +94,7 @@ export class ChromeWebSocketServer extends EventEmitter {
     });
 
     this.wss.on("connection", (ws, req) => {
-      console.log(
+      console.error(
         "WebSocket connection established from:",
         req.socket.remoteAddress,
       );
@@ -106,7 +106,7 @@ export class ChromeWebSocketServer extends EventEmitter {
       ws.on("message", (data) => {
         try {
           const message = JSON.parse(data.toString()) as WebSocketMessage;
-          console.log("Received message from extension:", message);
+          console.error("Received message from extension:", message);
           this.handleMessage(message);
         } catch (error) {
           console.error("Error parsing WebSocket message:", error);
@@ -114,7 +114,7 @@ export class ChromeWebSocketServer extends EventEmitter {
       });
 
       ws.on("close", () => {
-        console.log("Extension WebSocket disconnected");
+        console.error("Extension WebSocket disconnected");
         this.extensionSocket = null;
         this.emit("extensionDisconnected");
       });
@@ -213,12 +213,12 @@ export class ChromeWebSocketServer extends EventEmitter {
     return new Promise((resolve, reject) => {
       this.server.listen(this.port, this.host, () => {
         const actualIP = this.getLocalIP();
-        console.log(`Chrome WebSocket Server running on:`);
-        console.log(`  Local: http://localhost:${this.port}`);
-        console.log(`  Network: http://${actualIP}:${this.port}`);
-        console.log(`  WebSocket: ws://${actualIP}:${this.port}/ws`);
-        console.log("");
-        console.log("Extension should connect to the WebSocket URL above");
+        console.error(`Chrome WebSocket Server running on:`);
+        console.error(`  Local: http://localhost:${this.port}`);
+        console.error(`  Network: http://${actualIP}:${this.port}`);
+        console.error(`  WebSocket: ws://${actualIP}:${this.port}/ws`);
+        console.error("");
+        console.error("Extension should connect to the WebSocket URL above");
         resolve();
       });
 
