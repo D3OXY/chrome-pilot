@@ -276,8 +276,234 @@ async function executeInTab(tabId, action, params = {}) {
   }
 }
 
-// Function that runs in the page context
+// Function that runs in the page context - includes all necessary functions
 function pageAction(action, params) {
+  
+  // Helper function to click an element
+  function clickElement(selector) {
+    const element = document.querySelector(selector);
+    if (!element) {
+      throw new Error(`Element not found: ${selector}`);
+    }
+    
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.click();
+    
+    return { success: true, selector };
+  }
+
+  // Helper function to get page content
+  function getPageContent(selector) {
+    if (selector) {
+      const element = document.querySelector(selector);
+      if (!element) {
+        throw new Error(`Element not found: ${selector}`);
+      }
+      return {
+        content: element.textContent || element.innerText,
+        html: element.innerHTML
+      };
+    }
+    
+    return {
+      title: document.title,
+      url: window.location.href,
+      content: document.body.textContent || document.body.innerText,
+      html: document.documentElement.outerHTML
+    };
+  }
+
+  // Helper function to fill input
+  function fillInput(selector, value) {
+    const element = document.querySelector(selector);
+    if (!element) {
+      throw new Error(`Input element not found: ${selector}`);
+    }
+    
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.focus();
+    
+    if (element.type === 'checkbox' || element.type === 'radio') {
+      element.checked = Boolean(value);
+    } else if (element.tagName === 'SELECT') {
+      const option = element.querySelector(`option[value="${value}"]`) ||
+                     element.querySelector(`option[text="${value}"]`) ||
+                     [...element.options].find(opt => opt.textContent.trim() === value);
+      if (option) {
+        option.selected = true;
+        element.value = option.value;
+      } else {
+        element.value = value;
+      }
+    } else {
+      element.value = '';
+      element.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      
+      for (let i = 0; i < value.length; i++) {
+        const char = value[i];
+        element.value = value.substring(0, i + 1);
+        element.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          data: char,
+          inputType: 'insertText'
+        }));
+      }
+      element.value = value;
+    }
+    
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    element.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    
+    return { success: true, selector, value };
+  }
+
+  // Helper function to clear input
+  function clearInput(selector) {
+    const element = document.querySelector(selector);
+    if (!element) {
+      throw new Error(`Input element not found: ${selector}`);
+    }
+    
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    element.focus();
+    element.select();
+    element.value = '';
+    
+    if (element.isContentEditable) {
+      element.textContent = '';
+      element.innerHTML = '';
+    }
+    
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    
+    return { success: true, selector };
+  }
+
+  // Helper function to scroll page
+  function scrollPage(direction, amount = 500) {
+    const scrollOptions = { behavior: 'smooth' };
+    
+    switch (direction) {
+      case 'up':
+        window.scrollBy({ ...scrollOptions, top: -amount });
+        break;
+      case 'down':
+        window.scrollBy({ ...scrollOptions, top: amount });
+        break;
+      case 'left':
+        window.scrollBy({ ...scrollOptions, left: -amount });
+        break;
+      case 'right':
+        window.scrollBy({ ...scrollOptions, left: amount });
+        break;
+      default:
+        throw new Error(`Invalid scroll direction: ${direction}`);
+    }
+    
+    return { success: true, direction, amount };
+  }
+
+  // Helper function to fill form
+  function fillForm(fields) {
+    const results = [];
+    
+    fields.forEach(field => {
+      try {
+        const result = fillInput(field.selector, field.value);
+        results.push({ ...result, field: field.selector });
+      } catch (error) {
+        results.push({ 
+          success: false, 
+          selector: field.selector, 
+          value: field.value,
+          error: error.message 
+        });
+      }
+    });
+    
+    return { success: true, results, fieldCount: fields.length };
+  }
+
+  // Helper function for takeScreenshot (placeholder)
+  function takeScreenshot() {
+    return { success: false, error: "Screenshot not available in page context" };
+  }
+
+  // Helper function for coordinate clicking
+  function clickCoordinates(x, y) {
+    const clickEvent = new MouseEvent('click', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+    });
+
+    const element = document.elementFromPoint(x, y);
+    if (element) {
+      element.dispatchEvent(clickEvent);
+      return { success: true, x, y, element: element.tagName };
+    } else {
+      document.dispatchEvent(clickEvent);
+      return { success: true, x, y, element: 'document' };
+    }
+  }
+
+  // Helper function to find elements by text
+  function findElementByText(text, elementTypes = ['button', 'a', 'input']) {
+    const results = [];
+    const selectors = {
+      button: 'button, [role="button"], input[type="button"], input[type="submit"]',
+      a: 'a[href]',
+      input: 'input, textarea, select',
+      all: '*'
+    };
+    
+    elementTypes.forEach(type => {
+      const selector = selectors[type] || selectors.all;
+      const elements = document.querySelectorAll(selector);
+      
+      elements.forEach(el => {
+        const elementText = el.textContent || el.value || el.placeholder || el.alt || '';
+        if (elementText.toLowerCase().includes(text.toLowerCase())) {
+          const rect = el.getBoundingClientRect();
+          results.push({
+            selector: generateSimpleSelector(el),
+            text: elementText.trim(),
+            tagName: el.tagName.toLowerCase(),
+            type: el.type || null,
+            rect: {
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height
+            },
+            isVisible: rect.width > 0 && rect.height > 0
+          });
+        }
+      });
+    });
+    
+    return { success: true, results, count: results.length, searchText: text };
+  }
+
+  // Helper function to generate simple selector
+  function generateSimpleSelector(element) {
+    if (element.id) {
+      return `#${element.id}`;
+    }
+    if (element.className) {
+      const classes = element.className.split(' ').filter(c => c);
+      if (classes.length > 0) {
+        return `${element.tagName.toLowerCase()}.${classes[0]}`;
+      }
+    }
+    return element.tagName.toLowerCase();
+  }
+
   switch (action) {
     case 'click':
       return clickElement(params.selector);
