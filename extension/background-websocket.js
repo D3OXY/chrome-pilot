@@ -285,8 +285,99 @@ async function createTab(url) {
 }
 
 // Page interaction functions
+// Message type constants
+const MESSAGE_TYPES = {
+  CLICK_ELEMENT: 'clickElement',
+  FILL_ELEMENT: 'fillElement',
+  CLEAR_ELEMENT: 'clearElement',
+  GET_INTERACTIVE_ELEMENTS: 'getInteractiveElements',
+  GET_HTML_CONTENT: 'getHTMLContent',
+  GET_TEXT_CONTENT: 'getTextContent',
+  PREPARE_PAGE_FOR_CAPTURE: 'preparePageForCapture',
+  GET_PAGE_DETAILS: 'getPageDetails',
+  GET_ELEMENT_DETAILS: 'getElementDetails',
+  SCROLL_PAGE: 'scrollPage',
+  RESET_PAGE_AFTER_CAPTURE: 'resetPageAfterCapture',
+  HIGHLIGHT_ELEMENT: 'highlightElement',
+  UNHIGHLIGHT_ELEMENT: 'unhighlightElement',
+  REMOVE_ALL_HIGHLIGHTS: 'removeAllHighlights'
+};
+
+// Helper script injection tracking
+const injectedScripts = new Map();
+
+// Helper script injection function
+async function injectHelperScript(tabId, scriptName) {
+  const scriptKey = `${tabId}-${scriptName}`;
+  
+  if (injectedScripts.has(scriptKey)) {
+    return; // Already injected
+  }
+  
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [`inject-scripts/${scriptName}`]
+    });
+    injectedScripts.set(scriptKey, Date.now());
+    console.log(`Injected ${scriptName} into tab ${tabId}`);
+  } catch (error) {
+    console.error(`Failed to inject ${scriptName}:`, error);
+    throw error;
+  }
+}
+
+// Clean up injection tracking when tabs are closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const [key, _] of injectedScripts) {
+    if (key.startsWith(`${tabId}-`)) {
+      injectedScripts.delete(key);
+    }
+  }
+});
+
+// Send message to content script with helper injection
+async function sendToContentScript(tabId, message, requiredScript = null) {
+  if (requiredScript) {
+    await injectHelperScript(tabId, requiredScript);
+  }
+  
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(response);
+      }
+    });
+  });
+}
+
 async function executeInTab(tabId, action, params = {}) {
   try {
+    // For enhanced actions, use helper scripts
+    const enhancedActions = {
+      'click_enhanced': { script: 'click-helper.js', message: 'clickElement' },
+      'fill_enhanced': { script: 'fill-helper.js', message: 'fillElement' },
+      'clear_enhanced': { script: 'fill-helper.js', message: 'clearElement' },
+      'get_interactive_elements': { script: 'interactive-elements-helper.js', message: 'getInteractiveElements' },
+      'get_web_content': { script: 'web-fetcher-helper.js', message: 'getTextContent' },
+      'get_html_content': { script: 'web-fetcher-helper.js', message: 'getHTMLContent' },
+    };
+    
+    if (enhancedActions[action]) {
+      const config = enhancedActions[action];
+      const message = {
+        action: config.message,
+        selector: params.selector,
+        value: params.value,
+        ...params
+      };
+      
+      return await sendToContentScript(tabId, message, config.script);
+    }
+    
+    // Fallback to direct script execution for basic actions
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: pageAction,
@@ -312,10 +403,6 @@ function pageAction(action, params) {
       return scrollPage(params.direction, params.amount);
     case 'get_content':
       return getPageContent(params.selector);
-    case 'fill_input':
-      return fillInput(params.selector, params.value);
-    case 'get_interactive_elements':
-      return getInteractiveElements();
     case 'wait_for_element':
       return waitForElement(params.selector, params.timeout);
     case 'screenshot':
@@ -538,6 +625,11 @@ async function handleAction(action, params) {
       case 'fill_input':
       case 'get_interactive_elements':
       case 'wait_for_element':
+      case 'click_enhanced':
+      case 'fill_enhanced':
+      case 'clear_enhanced':
+      case 'get_web_content':
+      case 'get_html_content':
         const tabId = params.tabId || (await getActiveTab()).id;
         return await executeInTab(tabId, action, params);
       

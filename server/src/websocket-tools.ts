@@ -73,7 +73,7 @@ export class ChromeWebSocketTools {
 
   async click(selector: string, tabId?: number): Promise<any> {
     try {
-      const result = await this.webSocketServer.sendCommand("click", {
+      const result = await this.webSocketServer.sendCommand("click_enhanced", {
         selector,
         tabId,
       });
@@ -92,7 +92,7 @@ export class ChromeWebSocketTools {
 
   async type(selector: string, text: string, tabId?: number): Promise<any> {
     try {
-      const result = await this.webSocketServer.sendCommand("fill_input", {
+      const result = await this.webSocketServer.sendCommand("fill_enhanced", {
         selector,
         value: text,
         tabId,
@@ -205,7 +205,7 @@ export class ChromeWebSocketTools {
 
   async getContent(selector?: string, tabId?: number): Promise<any> {
     try {
-      const result = await this.webSocketServer.sendCommand("get_content", {
+      const result = await this.webSocketServer.sendCommand("get_web_content", {
         selector,
         tabId,
       });
