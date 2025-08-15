@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Chrome MCP Controller",
+  "version": "1.0.0",
+  "description": "Enables AI control of Chrome through MCP protocol",
+  "author": "Chrome Pilot",
+  
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "nativeMessaging",
+    "storage",
+    "webNavigation"
+  ],
+  
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  
+  "background": {
+    "service_worker": "background-websocket.js",
+    "type": "module"
+  },
+  
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  
+  "action": {
+    "default_title": "Chrome MCP Controller",
+    "default_popup": "popup.html"
+  }
+}

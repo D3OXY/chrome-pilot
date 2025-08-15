@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 350px;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+      text-align: center;
+      font-weight: bold;
+    }
+    
+    .status.connected {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.disconnected {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    
+    .config-section {
+      margin-bottom: 20px;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    
+    button:hover {
+      background-color: #0056b3;
+    }
+    
+    button:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+    }
+    
+    .test-section {
+      border-top: 1px solid #ddd;
+      padding-top: 15px;
+      margin-top: 15px;
+    }
+    
+    .info {
+      font-size: 12px;
+      color: #666;
+      margin-top: 10px;
+    }
+    
+    .log {
+      background-color: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 10px;
+      max-height: 100px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 11px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h3>Chrome MCP Controller</h3>
+  </div>
+  
+  <div id="status" class="status disconnected">
+    Disconnected
+  </div>
+  
+  <div class="config-section">
+    <div class="form-group">
+      <label for="wsUrl">WebSocket Server URL:</label>
+      <input type="text" id="wsUrl" placeholder="ws://172.25.0.1:9222/ws" />
+    </div>
+    
+    <button id="saveConfig">Save Configuration</button>
+    <button id="reconnect">Reconnect</button>
+  </div>
+  
+  <div class="test-section">
+    <button id="testConnection">Test Connection</button>
+    <button id="getTabs">Get Tabs</button>
+    
+    <div class="info">
+      <strong>For WSL/Windows setup:</strong><br>
+      1. Find your WSL IP with: <code>ip route | grep default</code><br>
+      2. Use: <code>ws://YOUR_WSL_IP:9222/ws</code><br>
+      3. Make sure Windows firewall allows port 9222
+    </div>
+    
+    <div id="log" class="log"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
