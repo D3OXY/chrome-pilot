@@ -24,6 +24,9 @@ document.addEventListener('DOMContentLoaded', function() {
       if (response && response.connected) {
         statusDiv.textContent = 'Connected';
         statusDiv.className = 'status connected';
+      } else if (response && response.persistentReconnecting) {
+        statusDiv.textContent = 'Disconnected (Auto-reconnecting...)';
+        statusDiv.className = 'status disconnected';
       } else {
         statusDiv.textContent = 'Disconnected';
         statusDiv.className = 'status disconnected';

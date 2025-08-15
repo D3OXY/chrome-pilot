@@ -6,6 +6,8 @@ let isConnected = false;
 let messageQueue = [];
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
+let persistentReconnectTimer = null;
+const persistentReconnectInterval = 10000; // Try every 10 seconds when server is offline
 
 // Message handlers registry
 const handlers = new Map();
@@ -23,6 +25,9 @@ function connectWebSocket() {
       console.log('WebSocket connected successfully');
       isConnected = true;
       reconnectAttempts = 0;
+      
+      // Stop persistent reconnection if it was running
+      stopPersistentReconnection();
       
       // Process queued messages
       processMessageQueue();
@@ -49,13 +54,14 @@ function connectWebSocket() {
       isConnected = false;
       ws = null;
       
-      // Attempt to reconnect
+      // Attempt to reconnect with exponential backoff (limited attempts)
       if (reconnectAttempts < maxReconnectAttempts) {
         reconnectAttempts++;
         console.log(`Reconnection attempt ${reconnectAttempts}/${maxReconnectAttempts}`);
         setTimeout(connectWebSocket, 2000 * reconnectAttempts);
       } else {
-        console.error('Max reconnection attempts reached');
+        console.log('Max immediate reconnection attempts reached, switching to persistent monitoring');
+        startPersistentReconnection();
       }
     };
     
@@ -66,6 +72,38 @@ function connectWebSocket() {
   } catch (error) {
     console.error('Failed to create WebSocket connection:', error);
     isConnected = false;
+  }
+}
+
+// Start persistent reconnection attempts
+function startPersistentReconnection() {
+  // Clear any existing timer
+  if (persistentReconnectTimer) {
+    clearInterval(persistentReconnectTimer);
+  }
+  
+  console.log(`Starting persistent reconnection attempts every ${persistentReconnectInterval/1000} seconds`);
+  
+  persistentReconnectTimer = setInterval(() => {
+    if (!isConnected) {
+      console.log('Attempting persistent reconnection...');
+      // Reset reconnect attempts for fresh exponential backoff
+      reconnectAttempts = 0;
+      connectWebSocket();
+    } else {
+      console.log('Connection restored, stopping persistent reconnection');
+      clearInterval(persistentReconnectTimer);
+      persistentReconnectTimer = null;
+    }
+  }, persistentReconnectInterval);
+}
+
+// Stop persistent reconnection
+function stopPersistentReconnection() {
+  if (persistentReconnectTimer) {
+    clearInterval(persistentReconnectTimer);
+    persistentReconnectTimer = null;
+    console.log('Stopped persistent reconnection attempts');
   }
 }
 
@@ -398,6 +436,10 @@ function updateWebSocketURL(newUrl) {
   WS_SERVER_URL = newUrl;
   console.log('WebSocket URL updated to:', WS_SERVER_URL);
   
+  // Stop persistent reconnection and restart with new URL
+  stopPersistentReconnection();
+  reconnectAttempts = 0;
+  
   // Reconnect with new URL
   if (ws) {
     ws.close();
@@ -434,11 +476,17 @@ chrome.runtime.onInstalled.addListener(() => {
 // Message listener for popup communication
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'getConnectionStatus') {
-    sendResponse({ connected: isConnected });
+    sendResponse({ 
+      connected: isConnected,
+      persistentReconnecting: persistentReconnectTimer !== null
+    });
     return;
   }
   
   if (message.action === 'reconnect') {
+    // Stop persistent reconnection and start fresh
+    stopPersistentReconnection();
+    reconnectAttempts = 0;
     connectWebSocket();
     sendResponse({ success: true });
     return;
