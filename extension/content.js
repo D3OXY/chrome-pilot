@@ -2,6 +2,12 @@
 // Enhanced content script that works with helper scripts for specialized functionality
 (function() {
   'use strict';
+  
+  // Prevent re-injection
+  if (window.__CHROME_PILOT_CONTENT_LOADED__) {
+    return;
+  }
+  window.__CHROME_PILOT_CONTENT_LOADED__ = true;
 
   // Track which helper scripts have been loaded
   window.__CHROME_PILOT_HELPERS__ = window.__CHROME_PILOT_HELPERS__ || {};
@@ -389,8 +395,14 @@
   
   // Message listener for commands from background script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.from === 'background') {
-      handleContentAction(message.action, message.params)
+    // Handle ping for content script health check
+    if (message.action === 'chrome_content_ping') {
+      sendResponse({ status: 'pong' });
+      return false;
+    }
+    
+    if (message.from === 'background' || message.action) {
+      handleContentAction(message.action, message.params || message)
         .then(result => sendResponse({ success: true, data: result }))
         .catch(error => sendResponse({ success: false, error: error.message }));
       

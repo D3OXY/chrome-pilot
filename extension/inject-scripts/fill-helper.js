@@ -360,7 +360,7 @@ if (window.__FILL_HELPER_INITIALIZED__) {
     return true;
   }
 
-  // Listen for messages from the extension
+  // Listen for messages from the extension background or content scripts
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     if (request.action === 'fillElement') {
       fillElement(request.selector, request.value)

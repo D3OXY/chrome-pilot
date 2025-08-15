@@ -303,15 +303,33 @@ const MESSAGE_TYPES = {
   REMOVE_ALL_HIGHLIGHTS: 'removeAllHighlights'
 };
 
-// Helper script injection tracking
+// Helper script injection tracking - Map of tabId-scriptName -> timestamp
 const injectedScripts = new Map();
 
-// Helper script injection function
+// Ping timeout for checking if scripts are loaded
+const PING_TIMEOUT_MS = 300;
+
+// Helper script injection function with ping/pong health check
 async function injectHelperScript(tabId, scriptName) {
   const scriptKey = `${tabId}-${scriptName}`;
   
-  if (injectedScripts.has(scriptKey)) {
-    return; // Already injected
+  // Check if script is already injected and working
+  try {
+    const pingAction = getPingActionForScript(scriptName);
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: pingAction }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Ping timeout for ${scriptName}`)), PING_TIMEOUT_MS)
+      ),
+    ]);
+
+    if (response && response.status === 'pong') {
+      console.log(`Script ${scriptName} already active in tab ${tabId}`);
+      injectedScripts.set(scriptKey, Date.now()); // Update timestamp
+      return;
+    }
+  } catch (error) {
+    console.log(`Ping failed for ${scriptName} in tab ${tabId}, injecting fresh`);
   }
   
   try {
@@ -320,10 +338,60 @@ async function injectHelperScript(tabId, scriptName) {
       files: [`inject-scripts/${scriptName}`]
     });
     injectedScripts.set(scriptKey, Date.now());
-    console.log(`Injected ${scriptName} into tab ${tabId}`);
+    console.log(`Successfully injected ${scriptName} into tab ${tabId}`);
   } catch (error) {
-    console.error(`Failed to inject ${scriptName}:`, error);
+    console.error(`Failed to inject ${scriptName} into tab ${tabId}:`, error);
     throw error;
+  }
+}
+
+// Get ping action name for a script
+function getPingActionForScript(scriptName) {
+  const pingMap = {
+    'fill-helper.js': 'chrome_fill_helper_ping',
+    'click-helper.js': 'chrome_click_element_ping',
+    'interactive-elements-helper.js': 'chrome_interactive_elements_ping',
+    'web-fetcher-helper.js': 'chrome_web_fetcher_ping',
+    'screenshot-helper.js': 'chrome_screenshot_helper_ping',
+    'keyboard-helper.js': 'chrome_keyboard_helper_ping',
+    'inject-bridge.js': 'chrome_inject_bridge_ping'
+  };
+  return pingMap[scriptName] || `chrome_${scriptName.replace('-helper.js', '').replace('.js', '')}_ping`;
+}
+
+// Inject script with MAIN world support
+async function injectScriptWithWorld(tabId, scriptConfig) {
+  const { files, world = 'ISOLATED', jsCode = null } = scriptConfig;
+  
+  if (world === 'MAIN') {
+    // Inject bridge first for MAIN world communication
+    await injectHelperScript(tabId, 'inject-bridge.js');
+    
+    if (jsCode) {
+      // Execute provided JavaScript code in MAIN world
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (code) => new Function(code)(),
+        args: [jsCode],
+        world: 'MAIN',
+      });
+    }
+  } else {
+    // Standard ISOLATED world injection
+    if (files && files.length > 0) {
+      for (const file of files) {
+        await injectHelperScript(tabId, file);
+      }
+    }
+    
+    if (jsCode) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (code) => new Function(code)(),
+        args: [jsCode],
+        world: 'ISOLATED',
+      });
+    }
   }
 }
 
@@ -336,8 +404,36 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
+// Ensure content script is injected in tab
+async function ensureContentScript(tabId) {
+  try {
+    // Try to ping the content script
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { action: 'chrome_content_ping' }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Content script ping timeout')), PING_TIMEOUT_MS)
+      ),
+    ]);
+
+    if (response && response.status === 'pong') {
+      return; // Content script is already loaded
+    }
+  } catch (error) {
+    // Content script not loaded, inject it
+    console.log(`Injecting content script into tab ${tabId}`);
+  }
+  
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js']
+  });
+}
+
 // Send message to content script with helper injection
 async function sendToContentScript(tabId, message, requiredScript = null) {
+  // Always ensure content script is loaded first
+  await ensureContentScript(tabId);
+  
   if (requiredScript) {
     await injectHelperScript(tabId, requiredScript);
   }
@@ -363,6 +459,8 @@ async function executeInTab(tabId, action, params = {}) {
       'get_interactive_elements': { script: 'interactive-elements-helper.js', message: 'getInteractiveElements' },
       'get_web_content': { script: 'web-fetcher-helper.js', message: 'getTextContent' },
       'get_html_content': { script: 'web-fetcher-helper.js', message: 'getHTMLContent' },
+      'simulate_keyboard': { script: 'keyboard-helper.js', message: 'simulateKeyboard' },
+      'simulate_key_combination': { script: 'keyboard-helper.js', message: 'simulateKeyCombination' },
     };
     
     if (enhancedActions[action]) {
@@ -630,11 +728,27 @@ async function handleAction(action, params) {
       case 'clear_enhanced':
       case 'get_web_content':
       case 'get_html_content':
+      case 'simulate_keyboard':
+      case 'simulate_key_combination':
         const tabId = params.tabId || (await getActiveTab()).id;
         return await executeInTab(tabId, action, params);
       
       case 'screenshot':
         return await takeScreenshot(params.tabId);
+      
+      case 'inject_script':
+        const injectTabId = params.tabId || (await getActiveTab()).id;
+        await injectScriptWithWorld(injectTabId, params);
+        return { success: true, message: 'Script injected successfully' };
+      
+      case 'send_command_to_inject_script':
+        const targetTabId = params.tabId || (await getActiveTab()).id;
+        const commandResult = await chrome.tabs.sendMessage(targetTabId, {
+          action: params.eventName,
+          payload: params.payload,
+          targetWorld: params.targetWorld || 'ISOLATED'
+        });
+        return commandResult;
       
       default:
         throw new Error(`Unknown action: ${action}`);
