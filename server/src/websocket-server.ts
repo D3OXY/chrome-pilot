@@ -29,6 +29,8 @@ export class ChromeWebSocketServer extends EventEmitter {
   >();
   private port: number;
   private host: string;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private heartbeatFrequency = 20000; // 20 seconds
 
   constructor(port = 9222, host = "0.0.0.0") {
     super();
@@ -103,11 +105,21 @@ export class ChromeWebSocketServer extends EventEmitter {
       this.extensionSocket = ws;
       this.emit("extensionConnected");
 
+      // Start heartbeat for this connection
+      this.startHeartbeat();
+
       ws.on("message", (data) => {
         try {
-          const message = JSON.parse(data.toString()) as WebSocketMessage;
+          const message = JSON.parse(data.toString()) as any;
+
+          // Handle heartbeat messages
+          if (message.type === "pong" || message.type === "keep_alive") {
+            console.error("Received heartbeat from extension:", message.type);
+            return;
+          }
+
           console.error("Received message from extension:", message);
-          this.handleMessage(message);
+          this.handleMessage(message as WebSocketMessage);
         } catch (error) {
           console.error("Error parsing WebSocket message:", error);
         }
@@ -116,6 +128,7 @@ export class ChromeWebSocketServer extends EventEmitter {
       ws.on("close", () => {
         console.error("Extension WebSocket disconnected");
         this.extensionSocket = null;
+        this.stopHeartbeat();
         this.emit("extensionDisconnected");
       });
 
@@ -234,12 +247,42 @@ export class ChromeWebSocketServer extends EventEmitter {
 
   public stop(): Promise<void> {
     return new Promise((resolve) => {
+      this.stopHeartbeat();
       this.wss.close(() => {
         this.server.close(() => {
           resolve();
         });
       });
     });
+  }
+
+  private startHeartbeat(): void {
+    // Clear any existing heartbeat
+    this.stopHeartbeat();
+
+    this.heartbeatInterval = setInterval(() => {
+      if (
+        this.extensionSocket &&
+        this.extensionSocket.readyState === WebSocket.OPEN
+      ) {
+        // Send ping message
+        const pingMessage = {
+          type: "ping",
+          timestamp: Date.now(),
+        };
+        this.extensionSocket.send(JSON.stringify(pingMessage));
+      } else {
+        // Connection is dead, stop heartbeat
+        this.stopHeartbeat();
+      }
+    }, this.heartbeatFrequency);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
   }
 
   public isExtensionConnected(): boolean {

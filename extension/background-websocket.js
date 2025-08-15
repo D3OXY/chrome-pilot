@@ -8,6 +8,8 @@ let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 let persistentReconnectTimer = null;
 const persistentReconnectInterval = 10000; // Try every 10 seconds when server is offline
+let keepAliveTimer = null;
+const keepAliveInterval = 25000; // Send keep-alive every 25 seconds
 
 // Message handlers registry
 const handlers = new Map();
@@ -29,6 +31,9 @@ function connectWebSocket() {
       // Stop persistent reconnection if it was running
       stopPersistentReconnection();
       
+      // Start keep-alive mechanism
+      startKeepAlive();
+      
       // Process queued messages
       processMessageQueue();
     };
@@ -43,6 +48,16 @@ function connectWebSocket() {
           return;
         }
         
+        if (message.type === 'ping') {
+          // Respond to server ping with pong
+          const pongMessage = {
+            type: 'pong',
+            timestamp: Date.now()
+          };
+          ws.send(JSON.stringify(pongMessage));
+          return;
+        }
+        
         handleWebSocketMessage(message);
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
@@ -53,6 +68,7 @@ function connectWebSocket() {
       console.log('WebSocket disconnected:', event.code, event.reason);
       isConnected = false;
       ws = null;
+      stopKeepAlive();
       
       // Attempt to reconnect with exponential backoff (limited attempts)
       if (reconnectAttempts < maxReconnectAttempts) {
@@ -629,6 +645,62 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(tabs => sendResponse({ success: true, data: tabs }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Keep message channel open for async response
+  }
+});
+
+// Keep-alive mechanism to prevent service worker suspension
+function startKeepAlive() {
+  stopKeepAlive();
+  
+  keepAliveTimer = setInterval(() => {
+    if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
+      // Send keep-alive message
+      const keepAliveMessage = {
+        type: 'keep_alive',
+        timestamp: Date.now()
+      };
+      ws.send(JSON.stringify(keepAliveMessage));
+    }
+  }, keepAliveInterval);
+}
+
+function stopKeepAlive() {
+  if (keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+  }
+}
+
+// Service worker lifecycle management
+chrome.runtime.onSuspend?.addListener(() => {
+  console.log('Service worker is being suspended');
+  stopKeepAlive();
+  stopPersistentReconnection();
+});
+
+chrome.runtime.onSuspendCanceled?.addListener(() => {
+  console.log('Service worker suspension was canceled');
+  if (isConnected) {
+    startKeepAlive();
+  }
+});
+
+// Set up alarm to keep service worker alive
+chrome.alarms.create('keep-alive', { 
+  delayInMinutes: 0.5, // 30 seconds
+  periodInMinutes: 0.5 
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keep-alive') {
+    // This just wakes up the service worker
+    console.log('Keep-alive alarm triggered');
+    
+    // Check connection status and reconnect if needed
+    if (!isConnected) {
+      console.log('Alarm detected disconnection, attempting to reconnect');
+      connectWebSocket();
+    }
   }
 });
 

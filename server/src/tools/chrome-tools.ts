@@ -144,24 +144,58 @@ export class ChromeTools {
       const tempDir = tmpdir();
       const filepath = join(tempDir, filename);
 
-      // Extract base64 data from data URL
-      const base64Data = result.screenshot.replace(
-        /^data:image\/png;base64,/,
-        "",
+      // Extract base64 data from data URL with improved format handling
+      let base64Data = result.screenshot;
+      let imageFormat = "png";
+
+      // Check if it's a data URL and extract the format and data
+      const dataUrlMatch = base64Data.match(
+        /^data:image\/([^;]+);base64,(.*)$/,
       );
-      const buffer = Buffer.from(base64Data, "base64");
+      if (dataUrlMatch) {
+        imageFormat = dataUrlMatch[1];
+        base64Data = dataUrlMatch[2];
+      } else if (base64Data.startsWith("data:")) {
+        // Handle other data URL formats
+        const dataUrlParts = base64Data.split(",");
+        if (dataUrlParts.length === 2) {
+          base64Data = dataUrlParts[1];
+          // Try to extract format from the header
+          const formatMatch = dataUrlParts[0].match(/data:image\/([^;]+)/);
+          if (formatMatch) {
+            imageFormat = formatMatch[1];
+          }
+        }
+      }
 
-      // Write to temp file
-      writeFileSync(filepath, buffer);
+      try {
+        const buffer = Buffer.from(base64Data, "base64");
 
-      return {
-        success: true,
-        screenshotPath: filepath,
-        filename: filename,
-        timestamp: result.timestamp,
-        tabId: tabId || "active",
-        message: `Screenshot saved to: ${filepath}`,
-      };
+        // Validate that we have a valid buffer
+        if (buffer.length === 0) {
+          throw new Error("Invalid screenshot data: empty buffer");
+        }
+
+        // Update filename with correct extension
+        const actualFilename = `chrome-screenshot-${timestamp}.${imageFormat}`;
+        const actualFilepath = join(tempDir, actualFilename);
+
+        // Write to temp file
+        writeFileSync(actualFilepath, buffer);
+
+        return {
+          success: true,
+          screenshotPath: actualFilepath,
+          filename: actualFilename,
+          timestamp: result.timestamp,
+          tabId: tabId || "active",
+          message: `Screenshot saved to: ${actualFilepath}`,
+        };
+      } catch (bufferError) {
+        throw new Error(
+          `Failed to process screenshot data: ${bufferError instanceof Error ? bufferError.message : String(bufferError)}`,
+        );
+      }
     } catch (error) {
       throw new Error(
         `Screenshot failed: ${error instanceof Error ? error.message : String(error)}`,

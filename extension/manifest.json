@@ -11,7 +11,8 @@
     "scripting",
     "nativeMessaging",
     "storage",
-    "webNavigation"
+    "webNavigation",
+    "alarms"
   ],
   
   "host_permissions": [
