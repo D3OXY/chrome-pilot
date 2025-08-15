@@ -18,6 +18,7 @@ class ChromeMCPServer {
   private webSocketServer?: ChromeWebSocketServer;
   private webSocketTools?: ChromeWebSocketTools;
   private mode: "stdio" | "websocket";
+  private shutdown!: (signal: string) => Promise<void>;
 
   constructor(mode: "stdio" | "websocket" = "stdio") {
     this.mode = mode;
@@ -52,7 +53,7 @@ class ChromeMCPServer {
     };
 
     // Graceful shutdown handlers
-    const shutdown = async (signal: string) => {
+    this.shutdown = async (signal: string) => {
       console.error(`\nReceived ${signal}, shutting down gracefully...`);
 
       try {
@@ -73,19 +74,30 @@ class ChromeMCPServer {
       }
     };
 
-    process.on("SIGINT", () => shutdown("SIGINT"));
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGUSR2", () => shutdown("SIGUSR2")); // For nodemon
+    process.on("SIGINT", () => this.shutdown("SIGINT"));
+    process.on("SIGTERM", () => this.shutdown("SIGTERM"));
+    process.on("SIGUSR2", () => this.shutdown("SIGUSR2")); // For nodemon
 
     // Handle uncaught exceptions
     process.on("uncaughtException", (error) => {
       console.error("Uncaught Exception:", error);
-      shutdown("uncaughtException");
+      this.shutdown("uncaughtException");
     });
 
     process.on("unhandledRejection", (reason, promise) => {
       console.error("Unhandled Rejection at:", promise, "reason:", reason);
-      shutdown("unhandledRejection");
+      this.shutdown("unhandledRejection");
+    });
+
+    // Handle stdin close (when Claude Code disconnects)
+    process.stdin.on("close", () => {
+      console.error("STDIN closed - Claude Code disconnected");
+      this.shutdown("STDIN_CLOSE");
+    });
+
+    process.stdin.on("end", () => {
+      console.error("STDIN ended - Claude Code disconnected");
+      this.shutdown("STDIN_END");
     });
   }
 
@@ -407,12 +419,26 @@ class ChromeMCPServer {
 
       // Also start MCP server on stdio for Claude Code integration
       const transport = new StdioServerTransport();
+
+      // Handle transport close events
+      transport.onclose = () => {
+        console.error("STDIO transport closed - shutting down server");
+        this.shutdown("STDIO_TRANSPORT_CLOSE");
+      };
+
       await this.server.connect(transport);
       console.error(
         "Chrome MCP Server running in WebSocket mode with stdio transport",
       );
     } else {
       const transport = new StdioServerTransport();
+
+      // Handle transport close events
+      transport.onclose = () => {
+        console.error("STDIO transport closed - shutting down server");
+        this.shutdown("STDIO_TRANSPORT_CLOSE");
+      };
+
       await this.server.connect(transport);
       console.error("Chrome MCP Server running on stdio");
     }
