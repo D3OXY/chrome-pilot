@@ -56,20 +56,47 @@ class ChromeMCPServer {
     this.shutdown = async (signal: string) => {
       console.error(`\nReceived ${signal}, shutting down gracefully...`);
 
+      // Set a hard timeout to force exit if graceful shutdown takes too long
+      const forceExitTimer = setTimeout(() => {
+        console.error("Forcefully terminating after timeout");
+        process.exit(1);
+      }, 5000); // 5 second timeout
+
       try {
         // Close WebSocket server if running
         if (this.webSocketServer) {
-          await this.webSocketServer.stop();
+          console.error("Stopping WebSocket server...");
+          await Promise.race([
+            this.webSocketServer.stop(),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error("WebSocket stop timeout")),
+                3000,
+              ),
+            ),
+          ]);
           console.error("WebSocket server closed");
         }
 
         // Close MCP server
-        await this.server.close();
+        console.error("Stopping MCP server...");
+        await Promise.race([
+          this.server.close(),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("MCP server close timeout")),
+              2000,
+            ),
+          ),
+        ]);
         console.error("MCP server closed");
 
+        clearTimeout(forceExitTimer);
+        console.error("Shutdown complete, exiting...");
         process.exit(0);
       } catch (error) {
         console.error("Error during shutdown:", error);
+        clearTimeout(forceExitTimer);
         process.exit(1);
       }
     };
@@ -422,8 +449,11 @@ class ChromeMCPServer {
 
       // Handle transport close events
       transport.onclose = () => {
-        console.error("STDIO transport closed - shutting down server");
-        this.shutdown("STDIO_TRANSPORT_CLOSE");
+        console.error(
+          "STDIO transport closed - shutting down server immediately",
+        );
+        // Force immediate shutdown when transport closes
+        setImmediate(() => this.shutdown("STDIO_TRANSPORT_CLOSE"));
       };
 
       await this.server.connect(transport);
@@ -435,8 +465,11 @@ class ChromeMCPServer {
 
       // Handle transport close events
       transport.onclose = () => {
-        console.error("STDIO transport closed - shutting down server");
-        this.shutdown("STDIO_TRANSPORT_CLOSE");
+        console.error(
+          "STDIO transport closed - shutting down server immediately",
+        );
+        // Force immediate shutdown when transport closes
+        setImmediate(() => this.shutdown("STDIO_TRANSPORT_CLOSE"));
       };
 
       await this.server.connect(transport);
